@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <OutputType>WinExe</OutputType>
+    <RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <AssemblyName>WazuhGuard</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../WazuhGuard.Core/WazuhGuard.Core.csproj"/>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12"/>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12"/>
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0"/>
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0"/>
+  </ItemGroup>
+  <ItemGroup><None Update="appsettings.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never"/></ItemGroup>
+</Project>

@@ -1,0 +1,78 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="WazuhGuard" Manufacturer="WazuhGuard" Version="$(ProductVersion)"
+           UpgradeCode="27C3C66F-8C47-47D8-A0BC-49E61C43DFD7" Language="1033"
+           Scope="perMachine" InstallerVersion="500" Compressed="yes">
+    <SummaryInformation Description="WazuhGuard Windows endpoint service"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of WazuhGuard is already installed."
+                  Schedule="afterInstallInitialize" AllowSameVersionUpgrades="no"/>
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
+    <Property Id="ARPNOMODIFY" Value="1"/>
+    <Property Id="ARPCOMMENTS" Value="Monitors Wazuh Agent availability. New installations start in TestMode."/>
+    <util:QueryNativeMachine/>
+    <Property Id="WINDOWSBUILD">
+      <RegistrySearch Id="WindowsBuildSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber" Type="raw" Bitness="always64"/>
+    </Property>
+    <Launch Condition="Installed OR (WIX_NATIVE_MACHINE = 34404 AND VersionNT64 AND (WINDOWSBUILD &gt;= 22000 OR (MsiNTProductType &lt;&gt; 1 AND WINDOWSBUILD &gt;= 20348)))"
+            Message="WazuhGuard requires Windows 11 x64 or Windows Server 2022/2025 x64."/>
+    <Launch Condition="Privileged" Message="Administrator privileges are required to install WazuhGuard."/>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="WazuhGuard">
+        <Component Id="ServiceExecutable" Guid="6FE6FE10-373B-4D4A-952D-9B35F0270737" Bitness="always64">
+          <File Id="GuardExe" Source="$(PublishDir)WazuhGuard.exe" KeyPath="yes"/>
+          <ServiceInstall Id="GuardService" Name="WazuhGuard" DisplayName="Wazuh Guard"
+                          Description="Monitors the availability of the Wazuh security agent and disconnects active VPN sessions when the agent becomes unavailable."
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Vital="yes">
+            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                                ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1"/>
+          </ServiceInstall>
+          <ServiceControl Id="GuardServiceControl" Name="WazuhGuard" Start="install" Stop="both" Remove="uninstall" Wait="yes"/>
+        </Component>
+        <Component Id="EventLogSource" Guid="4530D1C9-7E7E-46B9-A13D-8A28F88DD381" Bitness="always64">
+          <util:EventSource Name="WazuhGuard" Log="Application" EventMessageFile="[INSTALLFOLDER]System.Diagnostics.EventLog.Messages.dll"
+                            SupportsErrors="yes" SupportsWarnings="yes" SupportsInformationals="yes" KeyPath="yes"/>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATADIR" Name="WazuhGuard">
+        <Component Id="SecureDataDirectory" Guid="2B3F171A-1774-40C0-9EE0-9C802A38C142" Permanent="yes" Bitness="always64">
+          <CreateFolder><PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"/></CreateFolder>
+        </Component>
+        <Component Id="MutableConfiguration" Guid="5623155B-E278-4634-A476-71E074F21D9C" Permanent="yes" NeverOverwrite="yes" Bitness="always64">
+          <File Id="GuardConfiguration" Source="$(ConfigFile)" Name="appsettings.json" KeyPath="yes">
+            <PermissionEx Sddl="D:P(A;;FA;;;SY)(A;;FA;;;BA)"/>
+          </File>
+        </Component>
+        <Directory Id="LOGDIR" Name="logs">
+          <Component Id="SecureLogDirectory" Guid="0D01CF1A-A176-4A73-83E2-0A4F579FE5B7" Permanent="yes" Bitness="always64">
+            <CreateFolder><PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"/></CreateFolder>
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Validate configuration in the elevated transaction before attempting service start. -->
+    <CustomAction Id="ValidateConfiguration" FileRef="GuardExe" ExeCommand="--validate-configuration"
+                  Execute="deferred" Impersonate="no" Return="check"/>
+    <InstallExecuteSequence>
+      <Custom Action="ValidateConfiguration" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;"/>
+    </InstallExecuteSequence>
+    <Feature Id="Main" Title="WazuhGuard" Level="1">
+      <ComponentRef Id="ServiceExecutable"/>
+      <ComponentRef Id="EventLogSource"/>
+      <ComponentRef Id="SecureDataDirectory"/>
+      <ComponentRef Id="MutableConfiguration"/>
+      <ComponentRef Id="SecureLogDirectory"/>
+      <ComponentGroupRef Id="RuntimeFiles"/>
+    </Feature>
+  </Package>
+  <Fragment>
+    <ComponentGroup Id="RuntimeFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(PublishDir)**">
+        <Exclude Files="$(PublishDir)WazuhGuard.exe"/>
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

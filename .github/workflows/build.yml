@@ -1,0 +1,27 @@
+name: Build and test WazuhGuard
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build, test, publish, package and inspect
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: WazuhGuard-x64
+          path: |
+            artifacts/*.msi
+            artifacts/*.sha256
+            artifacts/test-results/*.trx
+          if-no-files-found: error

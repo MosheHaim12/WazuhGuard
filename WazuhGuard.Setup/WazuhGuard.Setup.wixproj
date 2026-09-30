@@ -1,0 +1,14 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputName>WazuhGuard-x64</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish\</PublishDir>
+    <ConfigFile Condition="'$(ConfigFile)' == ''">$(MSBuildThisFileDirectory)..\WazuhGuard\appsettings.json</ConfigFile>
+    <DefineConstants>PublishDir=$(PublishDir);ProductVersion=$(Version);ConfigFile=$(ConfigFile)</DefineConstants>
+    <OutputPath>$(MSBuildThisFileDirectory)..\artifacts\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup><PackageReference Include="WixToolset.Util.wixext" Version="6.0.2"/></ItemGroup>
+  <Target Name="RequirePublishedApplication" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(PublishDir)WazuhGuard.exe')" Text="Publish the self-contained win-x64 application first using scripts/build.ps1."/>
+  </Target>
+</Project>
