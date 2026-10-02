@@ -4,7 +4,7 @@ using WazuhGuard.Core;
 
 namespace WazuhGuard.Monitoring;
 
-public enum WazuhServiceStatus { Missing, Stopped, Running, Paused, Pending }
+public enum WazuhServiceStatus { Missing, Stopped, Running, Paused, Pending, StartPending, StopPending, ContinuePending, PausePending }
 public interface IWazuhServiceControl
 {
     WazuhServiceStatus GetStatus();
@@ -24,6 +24,10 @@ public sealed class WindowsWazuhService(GuardOptions options) : IWazuhServiceCon
                 ServiceControllerStatus.Running => WazuhServiceStatus.Running,
                 ServiceControllerStatus.Stopped => WazuhServiceStatus.Stopped,
                 ServiceControllerStatus.Paused => WazuhServiceStatus.Paused,
+                ServiceControllerStatus.StartPending => WazuhServiceStatus.StartPending,
+                ServiceControllerStatus.StopPending => WazuhServiceStatus.StopPending,
+                ServiceControllerStatus.ContinuePending => WazuhServiceStatus.ContinuePending,
+                ServiceControllerStatus.PausePending => WazuhServiceStatus.PausePending,
                 _ => WazuhServiceStatus.Pending
             };
         }

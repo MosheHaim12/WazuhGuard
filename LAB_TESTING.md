@@ -1,3 +1,5 @@
+> For the current manual-primitives task, use [MANUAL_VALIDATION.md](MANUAL_VALIDATION.md) first. The full automatic scenarios below are a separate later acceptance stage and were not executed for this change.
+
 # Disposable Windows VM acceptance test
 
 Run this entire sequence on a disposable Windows 11 x64 or Server 2022/2025 x64 VM with a hypervisor console, snapshot and a lab VPN endpoint. Use a local administrator. Do not use a production endpoint, an administrator's workstation or a remote-access-only VM. Record OS build, Wazuh version, VPN protocol/profile scope, installer SHA256 and test timestamps.

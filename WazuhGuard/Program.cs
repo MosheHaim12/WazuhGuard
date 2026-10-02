@@ -4,9 +4,7 @@ using Serilog;
 using Serilog.Formatting.Json;
 using WazuhGuard.Configuration;
 using WazuhGuard.Core;
-using WazuhGuard.Monitoring;
-using WazuhGuard.Recovery;
-using WazuhGuard.Vpn;
+using WazuhGuard.Diagnostics;
 
 namespace WazuhGuard;
 
@@ -15,6 +13,8 @@ internal static class Program
     public static async Task<int> Main(string[] args)
     {
         if (!OperatingSystem.IsWindows()) return 2;
+        if (args.Length > 0 && args is not ["--validate-configuration"] && !WindowsServiceHelpers.IsWindowsService())
+            return await DiagnosticHost.RunAsync(args);
         try
         {
             var logDirectory = Path.Combine(ConfigurationFile.DataDirectory, "logs");
@@ -42,14 +42,7 @@ internal static class Program
             builder.Logging.ClearProviders();
             builder.Services.AddSerilog();
             builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(90));
-            builder.Services.AddSingleton(options);
-            builder.Services.AddSingleton(TimeProvider.System);
-            builder.Services.AddSingleton<IWazuhServiceControl, WindowsWazuhService>();
-            builder.Services.AddSingleton<IInstallationProbe, InstallationProbe>();
-            builder.Services.AddSingleton<IWazuhHealthMonitor, WazuhHealthMonitor>();
-            builder.Services.AddSingleton<IWazuhRecoveryService, WazuhRecoveryService>();
-            builder.Services.AddSingleton<IRasApi, NativeRasApi>();
-            builder.Services.AddSingleton<IVpnSessionManager, RasVpnSessionManager>();
+            builder.Services.AddWazuhGuardPrimitives(options);
             builder.Services.AddSingleton<IGuardStateMachine, GuardStateMachine>();
             builder.Services.AddHostedService<Worker>();
             using var host = builder.Build();

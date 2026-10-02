@@ -23,7 +23,12 @@ public sealed class RasVpnSessionManager(IRasApi api, GuardOptions options, Time
                 ThrowIfError(status.ErrorCode, "RasGetConnectStatusW");
                 if (status.State != NativeRasApi.Connected || status.ConnectionError != 0) continue;
                 sessions.Add(new("WindowsRAS", Id(item), item.Name, "Connected",
-                    $"Windows RAS VPN ({item.DeviceName})", item.Handle, item.CorrelationId, item.AllUsers));
+                    $"Windows RAS VPN ({item.DeviceName})", item.Handle, item.CorrelationId, item.AllUsers)
+                {
+                    DeviceType = item.DeviceType, DeviceName = item.DeviceName,
+                    LocalTunnelEndpoint = status.LocalTunnelEndpoint, RemoteTunnelEndpoint = status.RemoteTunnelEndpoint,
+                    EntryId = item.EntryId, LogonSessionId = item.LogonSessionId, SubEntry = item.SubEntry
+                });
             }
             return sessions;
         }

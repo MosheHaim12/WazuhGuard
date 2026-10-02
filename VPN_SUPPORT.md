@@ -1,37 +1,48 @@
-# VPN support and native API contract
+# VPN providers and acceptance boundaries
 
-## Implemented scope
+The Windows service and all CLI commands resolve the same `CompositeVpnSessionManager` through `ProductionServices.AddWazuhGuardPrimitives`. It discovers registered `IVpnProvider` implementations, reports their capabilities/errors separately, and dispatches a selected session only to its owning provider. The Wazuh state machine is shared; its only provider-related change is skipping/reporting sessions whose disconnect capability is disabled.
 
-The production provider calls Unicode `RasEnumConnectionsW`, `RasGetConnectStatusW`, and `RasHangUpW` in Windows `rasapi32.dll` through P/Invoke. DLL lookup is limited to System32. Only entries whose RAS device type equals `vpn`, whose state equals `RASCS_Connected` (0x2000), and whose connection error is zero are eligible. Ordinary modem, ISDN, PPPoE and other non-VPN RAS connections are excluded.
+| Provider | Detection | Disconnect mechanism | Current status |
+| --- | --- | --- | --- |
+| WindowsRAS | `RasEnumConnectionsW` + `RasGetConnectStatusW`; connected, error-free `vpn` entries only | `RasHangUpW` on the revalidated handle/correlation/name; wait for handle cleanup | Implemented; real VPN acceptance still required |
+| CheckPoint | Known installed `trac.exe` + documented `info` output; Windows service/adapter evidence; RAS independently queried | None enabled in this build | Observation only; no authoritative parsed sessions or compatibility claim |
+| FortiClient | Known `FortiVPN.exe`, file version 7.4.7, documented `--cli --status` records | `--cli --disconnect --tunnel <exact-profile-name>`; revalidate and poll status | Detection implemented for that narrow contract; disconnect disabled by default; real acceptance pending |
+| Other VPNs | Heuristic service/adapter inventory when names identify VPN software | None | Unsupported/Unknown; no generic manipulation |
 
-This supports the Windows built-in **IKEv2, SSTP, L2TP/IPsec and PPTP client sessions when they are exposed as active RAS VPN connections to the LocalSystem service**. Listing PPTP/L2TP describes API compatibility, not a recommendation to deploy those protocols. There is no protocol-specific credential/profile manipulation. Device name is logged as descriptive technology metadata; it is not parsed into an authoritative protocol claim.
+`TestMode=true` blocks every actual VPN disconnect, including CLI calls. FortiClient additionally requires `EnableFortiClientDisconnect=true`. Capabilities describe implemented operations, not certification; inspect the provider result as well (Available, ObservationOnly, NotInstalled, Unsupported, Error). A failure in one provider does not hide another provider's supported sessions. Inventory evidence is never converted into a connected session or permission to disconnect. No firewall, route, DNS, adapter, profile or credential modification is implemented.
 
-Enumeration returns session name, connected status, opaque native handle, correlation GUID, device description and all-users flag. No phonebook, password or credential is changed. Before hangup, the provider re-enumerates and matches handle, correlation ID, name and VPN type to reduce stale-handle/reconnection races. `RasHangUpW` disconnects that session; success is reported only after status returns `ERROR_INVALID_HANDLE`. Already disappeared sessions are benign. Other native errors and bounded cleanup timeouts are logged and retried in later monitoring cycles.
+## Check Point: first real-machine observation
 
-Microsoft documents that RAS enumeration is followed by a status check to establish current connection state, and that hangup cleanup is asynchronous. The implementation follows both contracts. Enumeration allocation/retry counts, recovery polling and disconnect cleanup are bounded. After hangup has been issued, cancellation does not interrupt the bounded cleanup window (default 10 seconds, maximum 60), so SCM shutdown grants up to 90 seconds. Native synchronous API calls themselves have Windows-managed execution times; a managed cancellation token cannot interrupt a native call already in progress.
+On the Check Point-connected Windows machine run `--list-vpn` first using the waiting PowerShell invocation in [MANUAL_VALIDATION.md](MANUAL_VALIDATION.md). Expect raw `trac info` output when a recognized installation is available, plus any matching Windows service/adapter evidence and RAS sessions. **This machine has not been inspected yet.** An active Check Point tunnel is not guaranteed to appear in RAS or as a selectable session.
 
-## Limitations and required acceptance evidence
+The locator examines Program Files and Program Files (x86) for `CheckPoint\Endpoint Connect\trac.exe`, `CheckPoint\Endpoint Security\Endpoint Connect\trac.exe`, and `CheckPoint\TRAC\trac.exe`. Other paths/editions are not automatically executed. Multiple matches, unexpected company metadata or reparse points produce an explicit error. Missing `trac.exe` means not found in these locations, not proof Check Point is absent.
 
-* RAS is not a universal inventory of every encrypted tunnel or network adapter. An empty RAS list means **no supported visible active RAS VPN**, not proof that the endpoint has no VPN.
-* No vendor integration is implemented for FortiClient, Cisco Secure Client/AnyConnect, Palo Alto GlobalProtect, Check Point, OpenVPN, WireGuard, Tailscale or other independent clients. Those commonly require vendor-supported APIs. No arbitrary process killing or adapter disabling substitutes for an integration.
-* UWP/plugin-backed VPNs may use the Windows VPN platform but expose different behavior/technology labels. They are not independently certified here. A device described as SSTP may belong to a plugin using a different protocol.
-* LocalSystem/session-zero visibility and permissions must be verified on the actual deployment. Test user-only profiles, all-user profiles, concurrent user sessions and any Always On device/user tunnels separately. No impersonation, user token acquisition or RAS server administration API is used to extend visibility. Do not infer complete cross-user coverage from an interactive administrator's successful enumeration.
-* Always On/auto-trigger clients can reconnect immediately. WazuhGuard disconnects supported sessions again after its next poll; it does not disable auto-connect policy. Fast reconnect loops can produce repeated disconnect logs and short connection windows.
-* RAS call acceptance is not proof that every packet has stopped. The implementation confirms handle cleanup; VPN and network behavior require the lab checks.
-* Admins/SYSTEM can stop the guard, change configuration or replace binaries. There is no tamper-proof claim.
+Check Point documents both `trac info` and targeted `trac disconnect -g <gateway>`. This build deliberately implements only `info`: the client's real output format, active tunnel identity, gateway selection, version and account visibility still need evidence before a parser can authorize targeted disconnect. It never issues unqualified `trac disconnect`. Paste the full diagnostic output back to establish that mapping. Raw evidence may show site, gateway and connection state even though the structured supported-session count is zero.
 
-No real VPN protocol/interoperability test is claimed by the automated suite. Each intended OS/profile/protocol must pass the LocalSystem tests in `LAB_TESTING.md` before being described as deployment-validated.
+## FortiClient: bounded initial contract
 
-## Extending providers
+Only the documented **FortiClient Standalone Windows 7.4.7** CLI contract is implemented. Other file versions are reported Unsupported without execution. This does not imply support for every EMS-managed edition, client release or FortiGate configuration. A genuine supported installation may still expose different file-version metadata or localized output; those cases are refused until examined.
 
-Implement `IVpnSessionManager` using the vendor's supported session API, provide a distinct `VpnSession.Provider` value and stable per-connection identity, and register a composite dispatcher in `Program.cs`. The current provider rejects another provider's sessions. Maintain TestMode suppression, cancellation, bounded execution, per-session result logging and revalidation. Add fake API contract tests plus separate disposable-VM integration evidence before enabling a vendor provider.
+The parser accepts unambiguous `name :: state` records and returns only Connected profiles. Unrecognized/empty output, duplicate names, CLI errors or truncated output produce Unknown/error, not a guessed connected/disconnected state. Profile IDs are hashes of the profile name: they do not identify connection generations. Revalidation cannot eliminate a reconnect race on the same profile name. Targeted control always supplies `--tunnel`; the vendor's disconnect-all form is never used. Confirmation uses repeated status observations and a configured window; an individual CLI call has a ten-second deadline, so a status call may extend beyond the nominal polling window.
 
-## Primary references
+No FortiClient/FortiGate integration was exercised. Fake status samples test parsing, routing and safety gates only. Before production enablement, validate detection, target isolation with two profiles, reconnect behavior, CLI exit/output semantics, version matching and LocalSystem access on the actual client.
 
-* Microsoft: [RasEnumConnectionsW](https://learn.microsoft.com/en-us/windows/win32/api/ras/nf-ras-rasenumconnectionsw), active list, sizing, status-check requirement.
-* Microsoft: [RASCONN layout](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/legacy/aa376725(v=vs.85)), handle, device type, flags and correlation ID.
-* Microsoft: [RASCONNSTATUS layout](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/legacy/aa376728(v=vs.85)), connected state, error and tunnel fields.
-* Microsoft: [RasHangUpW](https://learn.microsoft.com/en-us/windows/win32/api/ras/nf-ras-rashangupw), session hangup and asynchronous cleanup.
-* Microsoft: [VPN connection types](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-connection-type), built-in protocols and plugin platform distinction.
+## RAS contract preserved
 
-Reviewed for this implementation on 2026-09-30. References explain the API contract; they do not certify this application's runtime interoperability.
+Unicode native functions are resolved only from System32. Discovery filters device type `vpn`, state `RASCS_Connected` and connection error zero. Modem/ISDN/PPPoE are excluded. The built-in IKEv2/SSTP/L2TP/PPTP client may be visible through RAS; this describes API scope, not a protocol recommendation or a claim of tested interoperability.
+
+Metadata includes handle, correlation GUID, entry GUID, logon-session LUID, subentry, all-users flag, device description and available local/remote tunnel endpoints. Tunnel endpoints are not necessarily assigned VPN-internal addresses or configured gateway hostnames. Hangup re-enumerates and matches handle/correlation/name/type, then waits for `ERROR_INVALID_HANDLE`. Already disappeared sessions are benign; other errors/timeouts are explicit. Cleanup after an issued hangup remains bounded even during cancellation. Synchronous Windows APIs have OS-controlled call durations.
+
+An empty RAS list does not prove that no VPN is connected. Interactive administrator visibility does not prove LocalSystem/session-zero or cross-user coverage. User profiles, device tunnels, concurrent users and automatic reconnection need separate acceptance. No impersonation or user-token acquisition is used. Successful handle cleanup is not packet-level isolation.
+
+## Adding providers
+
+Implement `IVpnProvider` with a distinct ID and explicit capabilities, then register it in `ProductionServices`. Supply stable identities, revalidate before targeted control, honor TestMode, bound external commands and retain the same shared state machine. Do not turn software/adapter evidence into control authority. Add contract tests and separate Windows/vendor acceptance evidence before claiming compatibility.
+
+## Primary contracts
+
+- Microsoft: [RasEnumConnectionsW](https://learn.microsoft.com/en-us/windows/win32/api/ras/nf-ras-rasenumconnectionsw), [RASCONN](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/legacy/aa376725(v=vs.85)), [RASCONNSTATUS](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/legacy/aa376728(v=vs.85)), [RasHangUpW](https://learn.microsoft.com/en-us/windows/win32/api/ras/nf-ras-rashangupw).
+- Check Point: [Remote Access Clients command line](https://sc1.checkpoint.com/documents/RemoteAccessClients_forWindows_AdminGuide/Content/Topics-RA-VPN-for-Win/Remote-Access-Clients-CMD.htm), [administrator guide, info/disconnect sections](https://sc1.checkpoint.com/documents/RemoteAccessClients_forWindows_AdminGuide/CP_RemoteAccess_VPN_Clients_forWin_AdminGuide.pdf).
+- Fortinet: [FortiClient Standalone Windows 7.4.7 CLI commands](https://docs.fortinet.com/document/forticlient/7.4.7/forticlient-standalone-user-guide/95591/forticlient-standalone-windows-cli-commands).
+
+Contracts reviewed for this implementation; none substitutes for real client acceptance.

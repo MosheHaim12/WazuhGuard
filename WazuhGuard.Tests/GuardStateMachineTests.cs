@@ -5,6 +5,13 @@ namespace WazuhGuard.Tests;
 
 public sealed class GuardStateMachineTests
 {
+    [Fact] public async Task DetectionOnlyVendorSessionIsNeverEnforcedButRasContinues()
+    {
+        using var f = new Fixture();
+        f.Vpn.Sessions = [Session("observation") with { DisconnectSupported = false }, Session("ras")];
+        await f.EnterEnforcing();
+        Assert.Equal("ras", Assert.Single(f.Vpn.Disconnected).Id);
+    }
     [Fact] public async Task HealthyRemainsHealthy()
     {
         using var f = new Fixture();
