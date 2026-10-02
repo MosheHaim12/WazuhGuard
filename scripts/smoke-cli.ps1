@@ -26,6 +26,17 @@ function Invoke-Diagnostic([string[]]$CommandArguments, [int]$ExpectedExit, [str
     }
     finally { $process.Dispose() }
 }
+# First prove the published artifact is a real Windows Console-subsystem executable.
+# A redirected ProcessStartInfo check alone would also pass for a WinExe and would not catch
+# the PowerShell symptom where the prompt returns before output is displayed.
+$peBytes = [IO.File]::ReadAllBytes($Executable)
+$peOffset = [BitConverter]::ToInt32($peBytes, 0x3c)
+$optionalHeader = $peOffset + 24
+$magic = [BitConverter]::ToUInt16($peBytes, $optionalHeader)
+$subsystemOffset = if ($magic -eq 0x20b) { $optionalHeader + 0x5c } else { $optionalHeader + 0x44 }
+$subsystem = [BitConverter]::ToUInt16($peBytes, $subsystemOffset)
+if ($subsystem -ne 3) { throw "Manual artifact is not Windows CUI/Console subsystem (subsystem=$subsystem)." }
+Write-Host 'PE subsystem PASS: manual artifact is Windows Console (CUI).'
 Invoke-Diagnostic @('--help') 0 'WazuhGuard manual diagnostics'
 Invoke-Diagnostic @('--invalid-command') 2 'Unknown command'
 # Dedicated CI runner only: never overwrite an installed endpoint's configuration.
