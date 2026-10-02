@@ -2,7 +2,8 @@
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <OutputType>WinExe</OutputType>
+    <OutputType Condition="'$(ManualDiagnosticsBuild)' == 'true'">Exe</OutputType>
+    <OutputType Condition="'$(ManualDiagnosticsBuild)' != 'true'">WinExe</OutputType>
     <RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
