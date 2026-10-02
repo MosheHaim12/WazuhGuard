@@ -17,6 +17,7 @@ if ($guard) {
     (Get-Service WazuhGuard).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(90))
 }
 $configPath = Join-Path $env:ProgramData 'WazuhGuard\appsettings.json'
+$backup = $null
 ```
 
 The CLI reads only this ProgramData configuration, exactly like the service. An MSI installation supplies it. For a fresh **portable lab** without existing configuration, copy the supplied `appsettings.example.json` (also available as `WazuhGuard/appsettings.json` in source) using the following block; it refuses to overwrite an existing file. Set `$sample` to its actual extracted location.

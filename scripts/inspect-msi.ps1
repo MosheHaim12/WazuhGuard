@@ -7,7 +7,7 @@ $db = $installer.OpenDatabase((Resolve-Path $Path).Path, 0)
 function Rows([string]$Sql) {
     $view = $db.OpenView($Sql)
     try {
-        $view.Execute()
+        [void]$view.Execute()
         while ($true) {
             $record = $view.Fetch()
             if ($null -eq $record) { break }
@@ -20,11 +20,15 @@ function Rows([string]$Sql) {
             [void][Runtime.InteropServices.Marshal]::ReleaseComObject($record)
         }
     }
-    finally { $view.Close(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($view) }
+    finally { [void]$view.Close(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($view) }
 }
 try {
     $services = @(Rows 'SELECT `Name`, `StartType`, `StartName` FROM `ServiceInstall`')
-    if ($services.Count -ne 1 -or $services[0][0] -ne 'WazuhGuard' -or $services[0][1] -ne '2' -or $services[0][2] -ne 'LocalSystem') {
+    Write-Host ('ServiceInstall rows: ' + (ConvertTo-Json -InputObject $services -Compress -Depth 5))
+    # Windows Installer treats null StartName as LocalSystem; WiX normalizes that account to null.
+    # https://learn.microsoft.com/en-us/windows/win32/msi/serviceinstall-table
+    if ($services.Count -ne 1 -or $services[0][0] -ne 'WazuhGuard' -or $services[0][1] -ne '2' -or
+        (-not [string]::IsNullOrEmpty($services[0][2]) -and $services[0][2] -ne 'LocalSystem')) {
         throw 'MSI does not install the expected automatic LocalSystem service.'
     }
     $controls = @(Rows 'SELECT `Name`, `Event`, `Wait` FROM `ServiceControl`')
@@ -32,6 +36,7 @@ try {
     $controlFlags = [int]$controls[0][1]
     if (($controlFlags -band 163) -ne 163) { throw 'Install-start / stop-both / uninstall-delete flags missing.' }
     $recovery = @(Rows 'SELECT `FirstFailureActionType`, `SecondFailureActionType`, `ThirdFailureActionType`, `RestartServiceDelayInSeconds` FROM `Wix4ServiceConfig`')
+    Write-Host ('Service recovery rows: ' + (ConvertTo-Json -InputObject $recovery -Compress -Depth 5))
     if ($recovery.Count -ne 1 -or $recovery[0][0] -ne 'restart' -or $recovery[0][1] -ne 'restart' -or $recovery[0][2] -ne 'restart' -or $recovery[0][3] -ne '30') {
         throw 'Service recovery policy is missing or incorrect.'
     }
