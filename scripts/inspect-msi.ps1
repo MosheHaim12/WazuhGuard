@@ -5,7 +5,8 @@ Set-StrictMode -Version Latest
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $db = $installer.OpenDatabase((Resolve-Path $Path).Path, 0)
 function Rows([string]$Sql) {
-    $view = $db.OpenView($Sql)
+    try { $view = $db.OpenView($Sql) }
+    catch { throw "MSI query failed: $Sql. $($_.Exception.Message)" }
     try {
         [void]$view.Execute()
         while ($true) {
@@ -25,7 +26,7 @@ function Rows([string]$Sql) {
 try {
     $services = @(Rows 'SELECT `Name`, `StartType`, `StartName` FROM `ServiceInstall`')
     Write-Host ('ServiceInstall rows: ' + (ConvertTo-Json -InputObject $services -Compress -Depth 5))
-    # Windows Installer treats null StartName as LocalSystem; WiX normalizes that account to null.
+    # Windows Installer permits both explicit LocalSystem and a null StartName.
     # https://learn.microsoft.com/en-us/windows/win32/msi/serviceinstall-table
     if ($services.Count -ne 1 -or $services[0][0] -ne 'WazuhGuard' -or $services[0][1] -ne '2' -or
         (-not [string]::IsNullOrEmpty($services[0][2]) -and $services[0][2] -ne 'LocalSystem')) {
@@ -44,7 +45,7 @@ try {
     foreach ($required in @('WazuhGuard.exe', 'coreclr.dll', 'hostfxr.dll', 'appsettings.json')) {
         if (-not ($files | Where-Object { ($_ -split '\|')[-1] -eq $required })) { throw "MSI payload missing $required" }
     }
-    if (@(Rows 'SELECT `SddlText` FROM `MsiLockPermissionsEx`').Count -lt 3) { throw 'ProgramData ACLs missing.' }
+    if (@(Rows 'SELECT `SDDLText` FROM `MsiLockPermissionsEx`').Count -lt 3) { throw 'ProgramData ACLs missing.' }
     if (@(Rows 'SELECT `UpgradeCode` FROM `Upgrade`').Count -lt 2) { throw 'Upgrade/downgrade rules missing.' }
     if (@(Rows 'SELECT `Condition` FROM `LaunchCondition`').Count -lt 2) { throw 'OS/elevation requirements missing.' }
     Write-Host "MSI inspection passed: $($files.Count) files, service lifecycle, recovery, ACLs, upgrade and platform rules."
