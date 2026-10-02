@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Principal;
 using WazuhGuard.Configuration;
+using WazuhGuard.Core;
 
 namespace WazuhGuard.Diagnostics;
 
