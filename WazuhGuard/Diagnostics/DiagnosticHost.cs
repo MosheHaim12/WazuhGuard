@@ -23,8 +23,21 @@ internal static class DiagnosticHost
             Console.WriteLine($"UTC: {DateTimeOffset.UtcNow:O}; account: {identity.Name}; process: {Environment.ProcessId}; 64-bit: {Environment.Is64BitProcess}");
             Console.WriteLine($"Configuration: {ConfigurationFile.ConfigPath}");
             Console.WriteLine("Context: current account, not the service's LocalSystem account. No state machine or monitoring worker is started.");
-            var options = ConfigurationFile.Read(ConfigurationFile.ConfigPath);
-            Console.WriteLine($"Mode: {(options.TestMode ? "TEST" : "PRODUCTION")}; TestMode={options.TestMode}");
+            GuardOptions options;
+            if (File.Exists(ConfigurationFile.ConfigPath))
+            {
+                options = ConfigurationFile.Read(ConfigurationFile.ConfigPath);
+                Console.WriteLine($"Mode: {(options.TestMode ? "TEST" : "PRODUCTION")}; TestMode={options.TestMode}");
+            }
+            else
+            {
+                // Manual diagnostics must work before the MSI/service is installed. Missing configuration
+                // always falls back to safe test defaults, so it can never enable a disconnect operation.
+                options = new GuardOptions();
+                options.Validate();
+                Console.WriteLine("Configuration file not found; using built-in safe diagnostic defaults.");
+                Console.WriteLine($"Mode: TEST; TestMode={options.TestMode}");
+            }
             var services = new ServiceCollection();
             services.AddLogging(logging => logging.AddSimpleConsole(format =>
             { format.SingleLine = true; format.TimestampFormat = "HH:mm:ss "; }));
