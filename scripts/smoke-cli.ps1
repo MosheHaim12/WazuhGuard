@@ -33,7 +33,11 @@ $peBytes = [IO.File]::ReadAllBytes($Executable)
 $peOffset = [BitConverter]::ToInt32($peBytes, 0x3c)
 $optionalHeader = $peOffset + 24
 $magic = [BitConverter]::ToUInt16($peBytes, $optionalHeader)
-$subsystemOffset = if ($magic -eq 0x20b) { $optionalHeader + 0x5c } else { $optionalHeader + 0x44 }
+if ($magic -ne 0x10b -and $magic -ne 0x20b) { throw ("Unexpected PE optional-header magic: 0x{0:X}" -f $magic) }
+# IMAGE_OPTIONAL_HEADER.Subsystem is at offset 0x44 from the start of both
+# PE32 and PE32+ optional headers. (The previous check incorrectly used 0x5c
+# for PE32+, which reads a different field and falsely reported subsystem=0.)
+$subsystemOffset = $optionalHeader + 0x44
 $subsystem = [BitConverter]::ToUInt16($peBytes, $subsystemOffset)
 if ($subsystem -ne 3) { throw "Manual artifact is not Windows CUI/Console subsystem (subsystem=$subsystem)." }
 Write-Host 'PE subsystem PASS: manual artifact is Windows Console (CUI).'
