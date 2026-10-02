@@ -59,8 +59,8 @@ try {
     # PowerShell/cmd then wait for it to finish and display output in natural order.
     Invoke-Checked dotnet @('publish', 'WazuhGuard/WazuhGuard.csproj', '-c', 'Release', '-r', 'win-x64',
         '--self-contained', 'true', '-p:PublishSingleFile=false', '-p:RestoreLockedMode=true',
-        '-p:OutputType=Exe', "-p:Version=$Version", '-o', $publish)
-    Write-Host "Manual diagnostic publish rebuilt as Console executable: $publish"
+        '-p:ManualDiagnosticsBuild=true', "-p:Version=$Version", '-o', $publish)
+    Write-Host "Manual diagnostic publish compiled as Console executable: $publish"
     Write-Host "Installer built and inspected: $msi (new installation mode: $DefaultMode)"
 }
 finally { Pop-Location }
