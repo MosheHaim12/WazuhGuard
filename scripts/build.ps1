@@ -53,6 +53,14 @@ try {
     }
     & (Join-Path $PSScriptRoot 'inspect-msi.ps1') -Path $msi
     (Get-FileHash $msi -Algorithm SHA256).Hash + '  WazuhGuard-x64.msi' | Set-Content "$msi.sha256"
+
+    # The installed service remains a WinExe so it never opens a console window.
+    # Re-publish only the manual diagnostic artifact as a Console executable.
+    # PowerShell/cmd then wait for it to finish and display output in natural order.
+    Invoke-Checked dotnet @('publish', 'WazuhGuard/WazuhGuard.csproj', '-c', 'Release', '-r', 'win-x64',
+        '--self-contained', 'true', '-p:PublishSingleFile=false', '-p:RestoreLockedMode=true',
+        '-p:OutputType=Exe', "-p:Version=$Version", '-o', $publish)
+    Write-Host "Manual diagnostic publish rebuilt as Console executable: $publish"
     Write-Host "Installer built and inspected: $msi (new installation mode: $DefaultMode)"
 }
 finally { Pop-Location }
