@@ -11,6 +11,7 @@ public sealed record GuardOptions
     public int RestartDelaySeconds { get; init; } = 5;
     public int VpnDisconnectTimeoutSeconds { get; init; } = 10;
     public bool TestMode { get; init; } = true;
+    public bool EnableFortiClientDisconnect { get; init; } = false;
 
     public void Validate()
     {

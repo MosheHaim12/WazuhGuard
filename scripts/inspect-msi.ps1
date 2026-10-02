@@ -8,9 +8,14 @@ function Rows([string]$Sql) {
     $view = $db.OpenView($Sql)
     try {
         $view.Execute()
-        while ($record = $view.Fetch()) {
+        while ($true) {
+            $record = $view.Fetch()
+            if ($null -eq $record) { break }
             $row = @()
-            for ($i = 1; $i -le $record.FieldCount; $i++) { $row += $record.StringData($i) }
+            $fieldCount = $record.GetType().InvokeMember('FieldCount', [Reflection.BindingFlags]::GetProperty, $null, $record, $null)
+            for ($i = 1; $i -le $fieldCount; $i++) {
+                $row += $record.GetType().InvokeMember('StringData', [Reflection.BindingFlags]::GetProperty, $null, $record, @($i))
+            }
             ,$row
             [void][Runtime.InteropServices.Marshal]::ReleaseComObject($record)
         }

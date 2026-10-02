@@ -16,16 +16,71 @@ public sealed class WindowsProvidersTests
     [InlineData(WazuhServiceStatus.Missing, true, HealthStatus.ServiceMissing)]
     [InlineData(WazuhServiceStatus.Running, false, HealthStatus.InstallationMissing)]
     [InlineData(WazuhServiceStatus.Pending, true, HealthStatus.Pending)]
+    [InlineData(WazuhServiceStatus.StartPending, true, HealthStatus.Pending)]
+    [InlineData(WazuhServiceStatus.StopPending, true, HealthStatus.Pending)]
+    [InlineData(WazuhServiceStatus.ContinuePending, true, HealthStatus.Pending)]
+    [InlineData(WazuhServiceStatus.PausePending, true, HealthStatus.Pending)]
     public async Task HealthRequiresServiceAndDirectory(WazuhServiceStatus status, bool exists, HealthStatus expected)
     {
         var monitor = new WazuhHealthMonitor(new FakeService { Status = status }, new FakeInstallation { Present = exists });
-        Assert.Equal(expected, (await monitor.CheckAsync(default)).Status);
+        var result = await monitor.CheckAsync(default);
+        Assert.Equal(expected, result.Status);
+        Assert.Equal(status.ToString(), result.Diagnostics!.ServiceState);
+        Assert.Equal(status != WazuhServiceStatus.Missing, result.Diagnostics.ServiceExists);
+        Assert.Equal(exists, result.Diagnostics.InstallationDirectoryExists);
     }
 
     [Fact] public async Task AccessDeniedIsNotReportedAsMissing()
     {
         var monitor = new WazuhHealthMonitor(new FakeService { Error = new Win32Exception(5) }, new FakeInstallation());
-        await Assert.ThrowsAsync<Win32Exception>(() => monitor.CheckAsync(default));
+        var error = await Assert.ThrowsAsync<HealthCheckException>(() => monitor.CheckAsync(default));
+        Assert.Equal(HealthStatus.Unknown, error.Snapshot.Status);
+        Assert.Null(error.Snapshot.Diagnostics!.ServiceExists);
+        Assert.True(error.Snapshot.Diagnostics.InstallationDirectoryExists);
+        Assert.IsType<Win32Exception>(Assert.Single(Assert.IsType<AggregateException>(error.InnerException).InnerExceptions));
+    }
+
+    [Fact] public async Task DirectoryAccessErrorPreservesKnownServiceStateWithoutProvingUnhealthy()
+    {
+        var monitor = new WazuhHealthMonitor(new FakeService { Status = WazuhServiceStatus.Stopped },
+            new FakeInstallation { Error = new UnauthorizedAccessException("lab access error") });
+        var error = await Assert.ThrowsAsync<HealthCheckException>(() => monitor.CheckAsync(default));
+        Assert.Equal(HealthStatus.Unknown, error.Snapshot.Status);
+        Assert.Equal("Stopped", error.Snapshot.Diagnostics!.ServiceState);
+        Assert.Null(error.Snapshot.Diagnostics.InstallationDirectoryExists);
+        Assert.False(error.Snapshot.Diagnostics.InstallationAccessible);
+    }
+
+    [Fact] public async Task BothHealthErrorsArePreserved()
+    {
+        var monitor = new WazuhHealthMonitor(new FakeService { Error = new Win32Exception(5) },
+            new FakeInstallation { Error = new IOException("disk error") });
+        var error = await Assert.ThrowsAsync<HealthCheckException>(() => monitor.CheckAsync(default));
+        Assert.Equal(2, Assert.IsType<AggregateException>(error.InnerException).InnerExceptions.Count);
+    }
+
+    [Fact] public void RasEndpointFormattingPreservesNetworkByteOrder()
+    {
+        Assert.Equal("192.0.2.1", NativeRasApi.FormatEndpoint(new() { Type = 1, Address0 = 0x010200c0 }));
+        Assert.Equal("2001:db8::1", NativeRasApi.FormatEndpoint(new() { Type = 2, Address0 = 0xb80d0120, Address3 = 0x01000000 }));
+        Assert.Null(NativeRasApi.FormatEndpoint(new() { Type = 0 }));
+        Assert.Null(NativeRasApi.FormatEndpoint(new() { Type = 1, Address0 = 0 }));
+    }
+
+    [Fact] public async Task RasMetadataFlowsThroughTheProductionDiscoveryPath()
+    {
+        var entry = Guid.NewGuid();
+        var api = new FakeRas { Connections = [Connection(1) with { EntryId = entry, LogonSessionId = 123, SubEntry = 1 }] };
+        api.States[1] = new(0, NativeRasApi.Connected, 0) { LocalTunnelEndpoint = "192.0.2.1", RemoteTunnelEndpoint = "198.51.100.5" };
+        using var provider = Provider(api);
+        var session = Assert.Single(await provider.GetActiveVpnSessionsAsync(default));
+        Assert.Equal("vpn", session.DeviceType);
+        Assert.Equal("WAN Miniport (IKEv2)", session.DeviceName);
+        Assert.Equal("192.0.2.1", session.LocalTunnelEndpoint);
+        Assert.Equal("198.51.100.5", session.RemoteTunnelEndpoint);
+        Assert.Equal(entry, session.EntryId);
+        Assert.Equal(123UL, session.LogonSessionId);
+        Assert.Equal(1U, session.SubEntry);
     }
 
     [Fact] public async Task RecoveryStartsStoppedService()
@@ -169,6 +224,7 @@ public sealed class WindowsProvidersTests
     private sealed class FakeInstallation : IInstallationProbe
     {
         public bool Present = true;
-        public bool Exists() => Present;
+        public Exception? Error;
+        public bool Exists() { if (Error is not null) throw Error; return Present; }
     }
 }

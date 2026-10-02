@@ -1,10 +1,10 @@
 # WazuhGuard
 
-WazuhGuard is an independent, silent LocalSystem Windows service that monitors the local Wazuh Agent. After a verified outage, bounded recovery attempts and a grace period, it disconnects active Windows RAS VPN sessions. It keeps checking for reconnections and stops interfering as soon as Wazuh is healthy.
+WazuhGuard is an independent, silent LocalSystem Windows service that monitors the local Wazuh Agent. After a verified outage, bounded recovery attempts and a grace period, it disconnects supported active VPN sessions through a shared provider layer. Windows RAS remains implemented; Check Point is observation-only and FortiClient 7.4.7 targeted control is opt-in and awaiting lab acceptance. It keeps checking for reconnections and stops interfering as soon as Wazuh is healthy.
 
 **New installations default to TestMode.** Monitoring, Wazuh recovery, grace periods and VPN discovery are active, but VPN hangup is suppressed. A production-default installer can be built with `-DefaultMode Production`; an existing installation's configuration always takes precedence on upgrade.
 
-See `BUILD_REPORT.md` for checks actually executed on this deliverable. A successful build is not a substitute for the Windows acceptance sequence in `LAB_TESTING.md`.
+See `BUILD_REPORT.md` for checks actually executed on this deliverable. Start with the four primitive checks in [MANUAL_VALIDATION.md](MANUAL_VALIDATION.md). The broader automatic acceptance sequence in `LAB_TESTING.md` is a separate later task.
 
 ## Customer installation
 
@@ -36,7 +36,8 @@ Both modes use **`C:\ProgramData\WazuhGuard\appsettings.json`** (or `%ProgramDat
 | RestartTimeoutSeconds | 15 | 1–120, per attempt |
 | RestartDelaySeconds | 5 | 1–300, between attempts |
 | VpnDisconnectTimeoutSeconds | 10 | 1–60 |
-| TestMode | true | Boolean; false enables hangup |
+| TestMode | true | Boolean; false enables supported hangup |
+| EnableFortiClientDisconnect | false | Explicit opt-in for the unverified 7.4.7 targeted CLI contract; TestMode must also be false |
 
 Example configuration is in `WazuhGuard/appsettings.json`. All timing units are seconds. A service that is stopped is started; the provider never kills or forcibly stops Wazuh. A service pending a transition is observed during grace. A paused service enters grace rather than receiving an unrequested Continue operation. Missing service or installation bypasses recovery and enters grace directly.
 
@@ -55,12 +56,12 @@ Startup prominently identifies TEST or PRODUCTION mode and version. Health/state
 ## Architecture
 
 * `WazuhGuard.Core`: immutable options, interfaces and explicit Healthy → Recovering → GracePeriod → Enforcing state machine. `TimeProvider` supplies monotonic grace deadlines; a semaphore serializes ticks.
-* `WazuhGuard`: Worker Service host, strict ProgramData configuration, rotating logs, `ServiceController` health/recovery, native RAS interop and session provider. `Worker.cs` only schedules and manages lifecycle.
-* `WazuhGuard.Tests`: fake-only unit/state-machine/provider tests. No tests instantiate the native RAS implementation or operate a real service/VPN.
+* `WazuhGuard`: Worker Service host, strict ProgramData configuration, rotating logs, `ServiceController` health/recovery, native RAS interop, multi-provider VPN dispatch and explicit manual CLI entry points. `Worker.cs` only schedules and manages lifecycle.
+* `WazuhGuard.Tests`: fake-only unit/state-machine/provider tests. Unit tests do not call native service/VPN operations. A separate Windows CLI smoke script tests redirected output and a read-only missing-service query.
 * `WazuhGuard.Setup`: WiX 6.0.2 MSI authoring, service tables, recovery extension, restrictive ACLs, config validation and major upgrades.
 * `scripts/build.ps1`: restore, Release build, tests, self-contained win-x64 publish, MSI build and MSI table inspection; optional Authenticode signing.
 
-`IWazuhHealthMonitor`, `IWazuhRecoveryService`, `IVpnSessionManager` and `IGuardStateMachine` separate policy from Windows operations. New VPN providers implement `IVpnSessionManager`; a composite may dispatch using `VpnSession.Provider` without changing the state machine. Future maintenance/upgrade detection can decorate the health monitor to return Unknown while authorized maintenance is active, which suspends enforcement and requires a fresh grace afterward. No installer-process heuristic is implemented.
+`IWazuhHealthMonitor`, `IWazuhRecoveryService`, `IVpnSessionManager` and `IGuardStateMachine` separate policy from Windows operations. New VPN providers implement `IVpnProvider`; `CompositeVpnSessionManager` dispatches by `VpnSession.Provider`. Both entry points use the same `ProductionServices` registrations. Future maintenance/upgrade detection can decorate the health monitor to return Unknown while authorized maintenance is active, which suspends enforcement and requires a fresh grace afterward. No installer-process heuristic is implemented.
 
 ## Repeatable Windows build
 
@@ -75,7 +76,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 For a fresh-install production default and a new version:
 
 ```powershell
-.\scripts\build.ps1 -Version 1.0.1 -DefaultMode Production
+.\scripts\build.ps1 -Version 1.1.1 -DefaultMode Production
 ```
 
 The first three version fields are MSI-significant; increment one for every release. Keep the UpgradeCode and component GUIDs stable. Same-version installation is maintenance, not an upgrade. Downgrades are blocked. The early major-upgrade removal is inside the MSI transaction, permitting rollback. Mutable config is Permanent/NeverOverwrite: edited settings survive upgrades and repairs.
@@ -92,8 +93,12 @@ Optional signing requires your organization's code-signing certificate already i
 
 Without that argument the MSI is unsigned; no signing identity is fabricated. Sign and timestamp an approved release before customer distribution where organizational policy requires it. The script signs the application before MSI packaging, then signs and verifies the MSI.
 
-For fake-only tests on macOS/Linux with .NET 10, run `dotnet restore WazuhGuard.sln` then `dotnet test WazuhGuard.Tests -c Release`. These exercise managed logic and ABI layouts, not native Windows APIs. Native WiX MSI creation/validation requires Windows; see the build report for any compatibility-layer build used for this delivery.
+For fake-only tests on macOS/Linux with .NET 10, run `dotnet restore WazuhGuard.sln` then `dotnet test WazuhGuard.Tests -c Release`. These exercise managed logic and ABI layouts, not native Windows APIs. Native WiX MSI creation/validation requires Windows; the CI workflow runs the native Windows build and read-only CLI smoke checks.
 
 ## Boundaries
 
-Read `VPN_SUPPORT.md` for the precise RAS scope and `SECURITY.md` for trust boundaries. WazuhGuard does not modify firewall rules, adapters, routes, DNS, credentials or profiles, does not kill VPN processes, and does not prevent reconnection. It does not verify Wazuh manager connectivity, event delivery, agent integrity or the authenticity of the service executable. It is not tamper-proof against Local Administrator or SYSTEM.
+Read `VPN_SUPPORT.md` for the provider capabilities and acceptance boundaries and `SECURITY.md` for trust boundaries. WazuhGuard does not modify firewall rules, adapters, routes, DNS, credentials or profiles, does not kill existing VPN processes, and does not prevent reconnection. It does not verify Wazuh manager connectivity, event delivery, agent integrity or the authenticity of the service executable. It is not tamper-proof against Local Administrator or SYSTEM.
+
+## Manual diagnostics
+
+Explicit `--check-wazuh`, `--list-vpn`, `--disconnect-vpn [identifier]` and `--check-and-repair-wazuh` invocations print to an existing console or redirected output. They load the same ProgramData configuration and production primitives without starting the automatic worker. The executable remains a silent WinExe when used as a service; use `Start-Process -NoNewWindow -Wait -PassThru` to wait and read its exit code. See [MANUAL_VALIDATION.md](MANUAL_VALIDATION.md) for setup, exact ordered commands, expected output and Check Point limitations.

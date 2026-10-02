@@ -12,6 +12,7 @@ public sealed class GuardStateMachine(IWazuhHealthMonitor health, IWazuhRecovery
     private HealthStatus? lastHealth;
     private string? lastVpnSet;
     private readonly HashSet<string> testReported = [];
+    private readonly HashSet<string> unsupportedReported = [];
     private readonly Dictionary<string, long> errors = [];
     public GuardState State { get; private set; } = GuardState.Healthy;
 
@@ -88,6 +89,7 @@ public sealed class GuardStateMachine(IWazuhHealthMonitor health, IWazuhRecovery
             graceStarted = null;
             lastVpnSet = null;
             testReported.Clear();
+            unsupportedReported.Clear();
             return false;
         }
         if (observation.IsVerifiedUnhealthy) return true;
@@ -117,9 +119,16 @@ public sealed class GuardStateMachine(IWazuhHealthMonitor health, IWazuhRecovery
             lastVpnSet = signature;
         }
         testReported.IntersectWith(sessions.Select(s => s.Id));
+        unsupportedReported.IntersectWith(sessions.Select(s => s.Id));
         foreach (var session in sessions)
         {
             ct.ThrowIfCancellationRequested();
+            if (!session.DisconnectSupported)
+            {
+                if (unsupportedReported.Add(session.Id))
+                    log.LogWarning("VPN session {VpnId} from {Provider} is detection-only; disconnect is unsupported or disabled", session.Id, session.Provider);
+                continue;
+            }
             // Wazuh may recover while enumerating or while disconnecting another session.
             if (!Accept(await ObserveAsync(ct))) return;
             if (options.TestMode)

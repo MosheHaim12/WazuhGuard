@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.1.0',
     [ValidateSet('Test', 'Production')][string]$DefaultMode = 'Test',
     [string]$SigningCertificateThumbprint,
     [string]$TimestampUrl = 'http://timestamp.digicert.com'

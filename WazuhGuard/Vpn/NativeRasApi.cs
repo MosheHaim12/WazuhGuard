@@ -1,11 +1,22 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Buffers.Binary;
+using System.Net;
 
 namespace WazuhGuard.Vpn;
 
 public sealed record RasConnection(nint Handle, string Name, string DeviceType, string DeviceName,
-    Guid CorrelationId, bool AllUsers);
-public readonly record struct RasStatus(uint ErrorCode, uint State, uint ConnectionError);
+    Guid CorrelationId, bool AllUsers)
+{
+    public Guid? EntryId { get; init; }
+    public ulong? LogonSessionId { get; init; }
+    public uint? SubEntry { get; init; }
+}
+public readonly record struct RasStatus(uint ErrorCode, uint State, uint ConnectionError)
+{
+    public string? LocalTunnelEndpoint { get; init; }
+    public string? RemoteTunnelEndpoint { get; init; }
+}
 public interface IRasApi
 {
     IReadOnlyList<RasConnection> Enumerate();
@@ -38,7 +49,11 @@ public sealed class NativeRasApi : IRasApi
                 {
                     var item = Marshal.PtrToStructure<RasConn>(buffer + checked(i * size));
                     connections.Add(new(item.Handle, item.EntryName, item.DeviceType, item.DeviceName,
-                        item.CorrelationId, (item.Flags & 1) != 0));
+                        item.CorrelationId, (item.Flags & 1) != 0)
+                    {
+                        EntryId = item.EntryId, SubEntry = item.SubEntry,
+                        LogonSessionId = ((ulong)(uint)item.LuidHigh << 32) | item.LuidLow
+                    });
                 }
                 return connections;
             }
@@ -51,9 +66,26 @@ public sealed class NativeRasApi : IRasApi
     {
         var status = new RasConnStatus { Size = (uint)Marshal.SizeOf<RasConnStatus>() };
         var error = RasGetConnectStatusW(handle, ref status);
-        return new(error, status.State, status.Error);
+        return new(error, status.State, status.Error)
+        {
+            LocalTunnelEndpoint = error == Success ? FormatEndpoint(status.Local) : null,
+            RemoteTunnelEndpoint = error == Success ? FormatEndpoint(status.Remote) : null
+        };
     }
     public uint HangUp(nint handle) => RasHangUpW(handle);
+
+    public static string? FormatEndpoint(RasTunnelEndpoint endpoint)
+    {
+        if (endpoint.Type is not (1 or 2)) return null; // RASTUNNELENDPOINT_IPv4 / IPv6
+        Span<byte> bytes = stackalloc byte[16];
+        // Copy union bytes in Windows memory order; IPAddress expects network-order bytes.
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, endpoint.Address0);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes[4..], endpoint.Address1);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes[8..], endpoint.Address2);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes[12..], endpoint.Address3);
+        var address = new IPAddress(endpoint.Type == 1 ? bytes[..4] : bytes);
+        return address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any) ? null : address.ToString();
+    }
 
     // ras.h, Unicode, default Windows packing. DWORD/LUID fields are 32-bit even on x64.
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
