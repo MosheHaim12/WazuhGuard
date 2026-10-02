@@ -51,23 +51,36 @@ public sealed class VpnProviderTests
         Assert.Empty(report.Sessions); Assert.Equal(VpnProviderState.Error, report.Providers[0].State);
     }
 
-    [Fact] public async Task CheckPointOnlyExecutesDocumentedReadOnlyInfoAndDoesNotInventSessions()
+    [Fact] public async Task CheckPointParsesVerifiedActiveSiteAndUsesDocumentedDisconnect()
     {
-        var runner = new FakeRunner(); runner.Results.Enqueue(new(0, "Unvalidated site/gateway/tunnel output", ""));
-        var provider = new CheckPointVpnProvider(new FakeLocator(), runner);
+        const string connected = "Trac connections:\n\nConn TC office:\n    gw: 82.80.134.62\n    status: Connected\n    active site: true\n";
+        const string disconnected = "Trac connections:\n";
+        var runner = new FakeRunner();
+        runner.Results.Enqueue(new(0, connected, "")); // discover
+        runner.Results.Enqueue(new(0, connected, "")); // pre-disconnect revalidation
+        runner.Results.Enqueue(new(0, "", "")); // trac disconnect
+        runner.Results.Enqueue(new(0, disconnected, "")); // verification
+        var provider = new CheckPointVpnProvider(new FakeLocator(), runner, new() { TestMode = false }, TimeProvider.System);
         var report = await provider.DiscoverAsync(default);
-        Assert.Equal(new[] { "info" }, Assert.Single(runner.Commands));
-        Assert.Equal(VpnProviderState.ObservationOnly, report.State);
-        Assert.Contains("Unvalidated site/gateway/tunnel output", report.Evidence);
-        Assert.Empty(report.Sessions); Assert.False(report.Capabilities.DisconnectSessions);
-        await Assert.ThrowsAsync<NotSupportedException>(() => provider.DisconnectAsync(Session("CheckPoint"), default));
-        Assert.Single(runner.Commands);
+        var session = Assert.Single(report.Sessions);
+        Assert.Equal("TC office", session.Name);
+        Assert.Equal("82.80.134.62", session.RemoteTunnelEndpoint);
+        Assert.True(session.DisconnectSupported);
+        Assert.Equal(DisconnectResult.Disconnected, await provider.DisconnectAsync(session, default));
+        Assert.Equal(new[] { "disconnect" }, runner.Commands[2]);
+    }
+
+    [Fact] public void CheckPointParserIgnoresDisconnectedAndInactiveSites()
+    {
+        const string info = "Conn old:\n gw: old-gw\n status: Disconnected\n active site: false\nConn current:\n gw: 10.0.0.1\n status: Connected\n active site: true\n";
+        var site = Assert.Single(CheckPointVpnProvider.ParseConnectedSites(info));
+        Assert.Equal("current", site.Name); Assert.Equal("10.0.0.1", site.Gateway);
     }
 
     [Fact] public async Task MissingVendorBinaryIsReportedWithoutRunningCommands()
     {
         var runner = new FakeRunner();
-        var report = await new CheckPointVpnProvider(new FakeLocator { Missing = true }, runner).DiscoverAsync(default);
+        var report = await new CheckPointVpnProvider(new FakeLocator { Missing = true }, runner, new(), TimeProvider.System).DiscoverAsync(default);
         Assert.Equal(VpnProviderState.NotInstalled, report.State); Assert.Empty(runner.Commands);
     }
 
@@ -78,7 +91,7 @@ public sealed class VpnProviderTests
     public async Task CheckPointNonzeroOrTruncatedOutputIsUnknownNotDisconnected(int exitCode, bool truncated, string error)
     {
         var runner = new FakeRunner(); runner.Results.Enqueue(new(exitCode, "", error, truncated));
-        var report = await new CheckPointVpnProvider(new FakeLocator(), runner).DiscoverAsync(default);
+        var report = await new CheckPointVpnProvider(new FakeLocator(), runner, new(), TimeProvider.System).DiscoverAsync(default);
         Assert.Equal(VpnProviderState.Error, report.State); Assert.Empty(report.Sessions);
     }
 
