@@ -57,9 +57,13 @@ try {
     # The installed service remains a WinExe so it never opens a console window.
     # Re-publish only the manual diagnostic artifact as a Console executable.
     # PowerShell/cmd then wait for it to finish and display output in natural order.
+    # Clean the app project's intermediates before switching OutputType. Otherwise the
+    # incremental publish can reuse the WinExe apphost produced for the service build.
+    Invoke-Checked dotnet @('clean', 'WazuhGuard/WazuhGuard.csproj', '-c', 'Release', '-r', 'win-x64',
+        '-p:ManualDiagnosticsBuild=true')
     Invoke-Checked dotnet @('publish', 'WazuhGuard/WazuhGuard.csproj', '-c', 'Release', '-r', 'win-x64',
         '--self-contained', 'true', '-p:PublishSingleFile=false', '-p:RestoreLockedMode=true',
-        '-p:ManualDiagnosticsBuild=true', "-p:Version=$Version", '-o', $publish)
+        '-p:ManualDiagnosticsBuild=true', '-p:UseAppHost=true', "-p:Version=$Version", '-o', $publish)
     Write-Host "Manual diagnostic publish compiled as Console executable: $publish"
     Write-Host "Installer built and inspected: $msi (new installation mode: $DefaultMode)"
 }
